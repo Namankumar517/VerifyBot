@@ -1,9 +1,10 @@
 from fastapi import FastAPI, Request, Form, Query
-from fastapi.responses import RedirectResponse, HTMLResponse, Response
+from fastapi.responses import RedirectResponse, HTMLResponse, Response, JSONResponse
 from fastapi.templating import Jinja2Templates
 from motor.motor_asyncio import AsyncIOMotorClient
 import httpx
 import json
+import os
 from datetime import datetime, timezone, timedelta
 import secrets
 import random
@@ -11,18 +12,23 @@ import io
 
 from PIL import Image, ImageDraw, ImageFilter
 
-# -------------------- LOAD CONFIG --------------------
-with open("config.json", "r", encoding="utf-8") as f:
-    CONFIG = json.load(f)
+# -------------------- SAFE CONFIG LOAD --------------------
+CONFIG = {}
+try:
+    with open("config.json", "r", encoding="utf-8") as f:
+        CONFIG = json.load(f)
+except Exception as e:
+    print(f"Config load error: {e}")
+    CONFIG = {}
 
-CLIENT_ID = CONFIG["client_id"]
-CLIENT_SECRET = CONFIG["client_secret"]
-REDIRECT_URI = CONFIG["redirect_uri"]
-MONGO_URI = CONFIG["mongo_uri"]
-DATABASE_NAME = CONFIG["database_name"]
+CLIENT_ID = CONFIG.get("client_id", "")
+CLIENT_SECRET = CONFIG.get("client_secret", "")
+REDIRECT_URI = CONFIG.get("redirect_uri", "")
+MONGO_URI = CONFIG.get("mongo_uri", "")
+DATABASE_NAME = CONFIG.get("database_name", "vault_verify_bot")
 
-BOT_API_URL = CONFIG["bot_api_url"]
-INTERNAL_API_KEY = CONFIG["internal_api_key"]
+BOT_API_URL = CONFIG.get("bot_api_url", "")
+INTERNAL_API_KEY = CONFIG.get("internal_api_key", "")
 
 DEFAULT_RETRY_COOLDOWN = CONFIG.get("default_verify_retry_cooldown_seconds", 45)
 DEFAULT_BRAND_NAME = CONFIG.get("default_brand_name", "Vault Style Verification")
@@ -37,20 +43,46 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
 # -------------------- MONGO --------------------
-mongo = AsyncIOMotorClient(MONGO_URI)
-db = mongo[DATABASE_NAME]
+mongo = None
+db = None
+sessions_collection = None
+verified_collection = None
+attempts_collection = None
+guild_settings = None
+join_records = None
 
-sessions_collection = db["verify_sessions"]
-verified_collection = db["verified_users"]
-attempts_collection = db["verify_attempts"]
-guild_settings = db["guild_settings"]
-join_records = db["join_records"]
+if MONGO_URI:
+    try:
+        mongo = AsyncIOMotorClient(MONGO_URI)
+        db = mongo[DATABASE_NAME]
+        sessions_collection = db["verify_sessions"]
+        verified_collection = db["verified_users"]
+        attempts_collection = db["verify_attempts"]
+        guild_settings = db["guild_settings"]
+        join_records = db["join_records"]
+        print("Mongo connected.")
+    except Exception as e:
+        print(f"Mongo init error: {e}")
 
 # -------------------- HELPERS --------------------
+def mongo_ready() -> bool:
+    return all([
+        sessions_collection is not None,
+        verified_collection is not None,
+        attempts_collection is not None,
+        guild_settings is not None,
+        join_records is not None,
+    ])
+
 async def get_guild_settings(guild_id: int):
-    data = await guild_settings.find_one({"guild_id": guild_id})
-    if data:
-        return data
+    if mongo_ready():
+        try:
+            data = await guild_settings.find_one({"guild_id": guild_id})
+            if data:
+                return data
+        except Exception as e:
+            print(f"Guild settings fetch error: {e}")
+
     return {
         "guild_id": guild_id,
         "verify_retry_cooldown_seconds": DEFAULT_RETRY_COOLDOWN,
@@ -104,7 +136,8 @@ async def verify_turnstile(token: str, remote_ip: str | None):
             )
             data = response.json()
             return data.get("success", False)
-    except:
+    except Exception as e:
+        print(f"Turnstile error: {e}")
         return False
 
 def calculate_risk(user_data: dict):
@@ -133,13 +166,54 @@ def calculate_risk(user_data: dict):
 
     return score, flags
 
+def bot_api_is_unusable() -> bool:
+    if not BOT_API_URL:
+        return True
+    lowered = BOT_API_URL.lower()
+    return (
+        "127.0.0.1" in lowered
+        or "localhost" in lowered
+    )
+
+# -------------------- BASIC ROUTES --------------------
+@app.get("/health")
+async def health():
+    return {
+        "status": "ok",
+        "mongo_ready": mongo_ready(),
+        "has_client_id": bool(CLIENT_ID),
+        "has_redirect_uri": bool(REDIRECT_URI),
+        "bot_api_url": BOT_API_URL,
+    }
+
+@app.get("/debug")
+async def debug():
+    return {
+        "status": "running",
+        "cwd": os.getcwd(),
+        "files": os.listdir("."),
+        "templates_exists": os.path.exists("templates"),
+        "home_exists": os.path.exists("templates/home.html"),
+        "verify_exists": os.path.exists("templates/verify.html"),
+        "success_exists": os.path.exists("templates/success.html"),
+        "failed_exists": os.path.exists("templates/failed.html"),
+        "mongo_ready": mongo_ready(),
+        "config_keys": list(CONFIG.keys()),
+    }
+
 # -------------------- ROUTES --------------------
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    return templates.TemplateResponse("home.html", {
-        "request": request,
-        "brand_name": DEFAULT_BRAND_NAME
-    })
+    try:
+        return templates.TemplateResponse("home.html", {
+            "request": request,
+            "brand_name": DEFAULT_BRAND_NAME
+        })
+    except Exception as e:
+        return HTMLResponse(
+            f"<h1>VerifyBot Web is running</h1><p>Template error: {str(e)}</p>",
+            status_code=200
+        )
 
 @app.get("/verify/{guild_id}", response_class=HTMLResponse)
 async def verify_page(request: Request, guild_id: int):
@@ -147,13 +221,17 @@ async def verify_page(request: Request, guild_id: int):
     state = secrets.token_urlsafe(32)
     captcha_text = make_captcha_text()
 
-    await sessions_collection.insert_one({
-        "state": state,
-        "guild_id": guild_id,
-        "created_at": datetime.now(timezone.utc),
-        "used": False,
-        "captcha_answer": captcha_text
-    })
+    if mongo_ready():
+        try:
+            await sessions_collection.insert_one({
+                "state": state,
+                "guild_id": guild_id,
+                "created_at": datetime.now(timezone.utc),
+                "used": False,
+                "captcha_answer": captcha_text
+            })
+        except Exception as e:
+            return HTMLResponse(f"Session store error: {str(e)}", status_code=500)
 
     return templates.TemplateResponse("verify.html", {
         "request": request,
@@ -166,6 +244,9 @@ async def verify_page(request: Request, guild_id: int):
 
 @app.get("/captcha/{state}")
 async def captcha_image(state: str):
+    if not mongo_ready():
+        return Response(status_code=500)
+
     session = await sessions_collection.find_one({"state": state})
     if not session:
         return Response(status_code=404)
@@ -181,6 +262,9 @@ async def start_oauth(
     captcha_answer: str = Form(""),
     cf_turnstile_response: str = Form(default="")
 ):
+    if not mongo_ready():
+        return HTMLResponse("Database is not ready.", status_code=500)
+
     session = await sessions_collection.find_one({"state": state})
     if not session:
         return templates.TemplateResponse("failed.html", {
@@ -223,12 +307,11 @@ async def start_oauth(
                 "brand_name": brand_name
             })
 
-    redirect_uri = REDIRECT_URI
     discord_auth_url = (
         f"https://discord.com/oauth2/authorize"
         f"?client_id={CLIENT_ID}"
         f"&response_type=code"
-        f"&redirect_uri={redirect_uri}"
+        f"&redirect_uri={REDIRECT_URI}"
         f"&scope=identify"
         f"&state={state}"
     )
@@ -237,6 +320,13 @@ async def start_oauth(
 
 @app.get("/callback")
 async def callback(request: Request, code: str = None, state: str = None):
+    if not mongo_ready():
+        return templates.TemplateResponse("failed.html", {
+            "request": request,
+            "message": "Database is not ready.",
+            "brand_name": DEFAULT_BRAND_NAME
+        })
+
     if not code or not state:
         return templates.TemplateResponse("failed.html", {
             "request": request,
@@ -341,20 +431,31 @@ async def callback(request: Request, code: str = None, state: str = None):
 
             risk_score, risk_flags = calculate_risk(user_data)
 
-            verify_api_response = await client.post(
-                f"{BOT_API_URL}/internal/verify",
-                json={
-                    "guild_id": guild_id,
-                    "user_id": discord_user_id,
-                    "username": discord_username,
-                    "source": "website_oauth",
-                    "risk_score": risk_score,
-                    "risk_flags": risk_flags
-                },
-                headers={"x-api-key": INTERNAL_API_KEY}
-            )
+            verify_result = {
+                "success": False,
+                "message": "Bot sync is not configured yet."
+            }
 
-            verify_result = verify_api_response.json()
+            if not bot_api_is_unusable():
+                try:
+                    verify_api_response = await client.post(
+                        f"{BOT_API_URL}/internal/verify",
+                        json={
+                            "guild_id": guild_id,
+                            "user_id": discord_user_id,
+                            "username": discord_username,
+                            "source": "website_oauth",
+                            "risk_score": risk_score,
+                            "risk_flags": risk_flags
+                        },
+                        headers={"x-api-key": INTERNAL_API_KEY}
+                    )
+                    verify_result = verify_api_response.json()
+                except Exception as api_error:
+                    verify_result = {
+                        "success": False,
+                        "message": f"Bot sync failed: {str(api_error)}"
+                    }
 
         await sessions_collection.update_one(
             {"state": state},
@@ -383,13 +484,7 @@ async def callback(request: Request, code: str = None, state: str = None):
             "risk_flags": risk_flags
         })
 
-        if not verify_result.get("success"):
-            return templates.TemplateResponse("failed.html", {
-                "request": request,
-                "message": verify_result.get("message", "Verification failed."),
-                "brand_name": brand_name
-            })
-
+        # Save website-side verification record even if bot sync is unavailable
         await verified_collection.update_one(
             {"guild_id": guild_id, "user_id": discord_user_id},
             {
@@ -397,15 +492,28 @@ async def callback(request: Request, code: str = None, state: str = None):
                     "guild_id": guild_id,
                     "user_id": discord_user_id,
                     "username": discord_username,
-                    "verified": True,
+                    "verified": bool(verify_result.get("success", False)),
                     "verified_at": datetime.now(timezone.utc),
                     "source": "website_oauth",
                     "risk_score": risk_score,
-                    "risk_flags": risk_flags
+                    "risk_flags": risk_flags,
+                    "bot_sync_message": verify_result.get("message", "")
                 }
             },
             upsert=True
         )
+
+        if not verify_result.get("success"):
+            return templates.TemplateResponse("success.html", {
+                "request": request,
+                "username": discord_username,
+                "user_id": discord_user_id,
+                "message": (
+                    "Website verification completed, but automatic Discord role sync is not configured yet. "
+                    f"Bot response: {verify_result.get('message', 'Unknown issue')}"
+                ),
+                "brand_name": brand_name
+            })
 
         return templates.TemplateResponse("success.html", {
             "request": request,
@@ -416,12 +524,13 @@ async def callback(request: Request, code: str = None, state: str = None):
         })
 
     except Exception as e:
-        await attempts_collection.insert_one({
-            "guild_id": guild_id,
-            "status": "website_error",
-            "created_at": datetime.now(timezone.utc),
-            "error": str(e)
-        })
+        if mongo_ready():
+            await attempts_collection.insert_one({
+                "guild_id": guild_id if "guild_id" in locals() else 0,
+                "status": "website_error",
+                "created_at": datetime.now(timezone.utc),
+                "error": str(e)
+            })
 
         return templates.TemplateResponse("failed.html", {
             "request": request,
@@ -436,6 +545,9 @@ async def dashboard(request: Request, key: str = Query(default=""), guild_id: in
 
     if guild_id == 0:
         return HTMLResponse("Missing guild_id", status_code=400)
+
+    if not mongo_ready():
+        return HTMLResponse("Database is not ready.", status_code=500)
 
     settings = await get_guild_settings(guild_id)
     brand_name = settings.get("brand_name", DEFAULT_BRAND_NAME)
