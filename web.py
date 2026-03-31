@@ -90,15 +90,25 @@ async def callback(request: Request, code: str = None, state: str = None):
                     "code": code,
                     "redirect_uri": REDIRECT_URI,
                 },
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json"
+                },
             )
 
             token_text = token_res.text
+
+            if token_res.status_code != 200:
+                return HTMLResponse(
+                    f"<h2>Token Request Failed</h2><pre>Status: {token_res.status_code}\n\n{token_text}</pre>",
+                    status_code=400
+                )
+
             try:
                 token_json = token_res.json()
             except Exception:
                 return HTMLResponse(
-                    f"<h2>Token Parse Error</h2><pre>{token_text}</pre>",
+                    f"<h2>Token Parse Error</h2><pre>Status: {token_res.status_code}\n\n{token_text}</pre>",
                     status_code=500
                 )
 
