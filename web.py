@@ -329,52 +329,88 @@ async def start_oauth(state: str):
 @app.get("/callback")
 async def callback(request: Request, code: str = None, state: str = None):
     try:
+        if not code or not state:
+            return HTMLResponse("<h2>Missing code/state</h2>", status_code=400)
+
+        # STEP 1: Exchange code → access token
+        async with httpx.AsyncClient() as client:
+            token_res = await client.post(
+                "https://discord.com/api/oauth2/token",
+                data={
+                    "client_id": CLIENT_ID,
+                    "client_secret": CLIENT_SECRET,
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": REDIRECT_URI,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+
+            token_json = token_res.json()
+            access_token = token_json.get("access_token")
+
+            if not access_token:
+                return HTMLResponse(f"<h2>Token Error: {token_json}</h2>")
+
+            # STEP 2: Get user info
+            user_res = await client.get(
+                "https://discord.com/api/users/@me",
+                headers={"Authorization": f"Bearer {access_token}"}
+            )
+
+            user = user_res.json()
+            user_id = int(user["id"])
+            username = user["username"]
+
+        # STEP 3: Get session
+        session = await sessions_collection.find_one({"state": state})
+
+        if not session:
+            return HTMLResponse("<h2>Invalid session</h2>")
+
+        guild_id = session["guild_id"]
+
+        # STEP 4: Call bot API (VERY IMPORTANT)
+        async with httpx.AsyncClient() as client:
+            api_res = await client.post(
+                f"{BOT_API_URL}/internal/verify",
+                json={
+                    "guild_id": guild_id,
+                    "user_id": user_id,
+                    "username": username,
+                    "source": "web"
+                },
+                headers={"x-api-key": INTERNAL_API_KEY}
+            )
+
+            result = api_res.json()
+
+        # STEP 5: Save verified user
+        await verified_collection.update_one(
+            {"guild_id": guild_id, "user_id": user_id},
+            {
+                "$set": {
+                    "guild_id": guild_id,
+                    "user_id": user_id,
+                    "username": username,
+                    "verified": True,
+                    "verified_at": datetime.now(timezone.utc),
+                }
+            },
+            upsert=True
+        )
+
+        # SUCCESS PAGE
         return HTMLResponse(f"""
         <html>
-        <head>
-            <title>Verification Complete</title>
-            <style>
-                body {{
-                    background: #0b1020;
-                    color: white;
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                    height: 100vh;
-                    font-family: Arial;
-                    margin: 0;
-                }}
-                .card {{
-                    background: #161b2e;
-                    padding: 30px;
-                    border-radius: 15px;
-                    text-align: center;
-                    width: 420px;
-                    box-shadow: 0 12px 32px rgba(0,0,0,0.35);
-                }}
-                .ok {{
-                    font-size: 22px;
-                    font-weight: bold;
-                    margin-bottom: 12px;
-                    color: #43b581;
-                }}
-                .muted {{
-                    color: #cfd5e6;
-                    line-height: 1.6;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="card">
-                <div class="ok">✅ Authorization Success</div>
-                <p class="muted">Discord OAuth callback reached successfully.</p>
-                <p class="muted">Code: {code}</p>
-                <p class="muted">State: {state}</p>
-                <p class="muted">You can now return to Discord.</p>
-            </div>
+        <body style="background:#0b1020;color:white;text-align:center;padding-top:100px;font-family:sans-serif;">
+            <h2>✅ Verified Successfully</h2>
+            <p>User: {username}</p>
+            <p>You can now return to Discord.</p>
         </body>
         </html>
         """)
+
     except Exception as e:
         return HTMLResponse(f"<h2>Callback Error: {str(e)}</h2>", status_code=500)
 
