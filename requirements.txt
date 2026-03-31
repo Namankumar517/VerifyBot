@@ -1,0 +1,10 @@
+discord.py
+fastapi
+uvicorn
+motor
+pymongo
+python-dotenv
+httpx
+jinja2
+python-multipart
+pillow
