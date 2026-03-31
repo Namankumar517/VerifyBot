@@ -204,16 +204,42 @@ async def debug():
 # -------------------- ROUTES --------------------
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    try:
-        return templates.TemplateResponse("home.html", {
-            "request": request,
-            "brand_name": DEFAULT_BRAND_NAME
-        })
-    except Exception as e:
-        return HTMLResponse(
-            f"<h1>VerifyBot Web is running</h1><p>Template error: {str(e)}</p>",
-            status_code=200
-        )
+    return HTMLResponse("""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>VerifyBot</title>
+        <style>
+            body {
+                margin: 0;
+                font-family: Arial, sans-serif;
+                background: #0b1020;
+                color: white;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 100vh;
+            }
+            .card {
+                width: 420px;
+                padding: 30px;
+                border-radius: 18px;
+                background: #161b2e;
+                text-align: center;
+                box-shadow: 0 12px 32px rgba(0,0,0,0.35);
+            }
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h1>VerifyBot Web is Working</h1>
+            <p>Render deployment is successful.</p>
+        </div>
+    </body>
+    </html>
+    """)
 
 @app.get("/verify/{guild_id}", response_class=HTMLResponse)
 async def verify_page(request: Request, guild_id: int):
