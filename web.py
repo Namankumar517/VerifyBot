@@ -73,12 +73,12 @@ async def callback(request: Request, code: str = None, state: str = None):
             return HTMLResponse("<h2>Missing code or state</h2>", status_code=400)
 
         session = await oauth_sessions.find_one({"state": state})
-if not session:
-    return HTMLResponse("<h2>Invalid or expired session</h2>", status_code=400)
+        if not session:
+            return HTMLResponse("<h2>Invalid or expired session</h2>", status_code=400)
 
-guild_id = session["guild_id"]
+        guild_id = session["guild_id"]
 
-await oauth_sessions.delete_one({"state": state})
+        await oauth_sessions.delete_one({"state": state})
 
         async with httpx.AsyncClient(timeout=20.0) as client:
             token_res = await client.post(
@@ -93,23 +93,47 @@ await oauth_sessions.delete_one({"state": state})
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
 
-            token_json = token_res.json()
+            token_text = token_res.text
+            try:
+                token_json = token_res.json()
+            except Exception:
+                return HTMLResponse(
+                    f"<h2>Token Parse Error</h2><pre>{token_text}</pre>",
+                    status_code=500
+                )
+
             access_token = token_json.get("access_token")
             refresh_token = token_json.get("refresh_token")
 
             if not access_token:
-                return HTMLResponse(f"<h2>Token Error</h2><pre>{token_json}</pre>", status_code=400)
+                return HTMLResponse(
+                    f"<h2>Token Error</h2><pre>{json.dumps(token_json, indent=2)}</pre>",
+                    status_code=400
+                )
 
             user_res = await client.get(
                 "https://discord.com/api/users/@me",
                 headers={"Authorization": f"Bearer {access_token}"}
             )
-            user_data = user_res.json()
+
+            user_text = user_res.text
+            try:
+                user_data = user_res.json()
+            except Exception:
+                return HTMLResponse(
+                    f"<h2>User Parse Error</h2><pre>{user_text}</pre>",
+                    status_code=500
+                )
+
+            if "id" not in user_data:
+                return HTMLResponse(
+                    f"<h2>User Fetch Error</h2><pre>{json.dumps(user_data, indent=2)}</pre>",
+                    status_code=400
+                )
 
             user_id = int(user_data["id"])
-            username = user_data["username"]
+            username = user_data.get("username", str(user_id))
 
-            # Save token
             await oauth_tokens.update_one(
                 {"guild_id": guild_id, "user_id": user_id},
                 {
@@ -125,25 +149,35 @@ await oauth_sessions.delete_one({"state": state})
                 upsert=True
             )
 
-            # Call bot internal verify API
-            verify_res = await client.post(
-                f"{BOT_API_URL}/internal/verify",
-                json={
-                    "guild_id": guild_id,
-                    "user_id": user_id,
-                    "username": username,
-                    "source": "oauth_callback"
-                },
-                headers={"x-api-key": INTERNAL_API_KEY}
-            )
+            verify_message = "Authorization completed."
+            verify_success = False
 
-            verify_text = await verify_res.aread()
-            try:
-                verify_json = json.loads(verify_text.decode())
-            except Exception:
-                verify_json = {"success": False, "message": verify_text.decode(errors="ignore")}
+            if BOT_API_URL:
+                verify_res = await client.post(
+                    f"{BOT_API_URL}/internal/verify",
+                    json={
+                        "guild_id": guild_id,
+                        "user_id": user_id,
+                        "username": username,
+                        "source": "oauth_callback"
+                    },
+                    headers={"x-api-key": INTERNAL_API_KEY}
+                )
+
+                verify_text = verify_res.text
+                try:
+                    verify_json = verify_res.json()
+                    verify_success = bool(verify_json.get("success", False))
+                    verify_message = verify_json.get("message", "Completed")
+                except Exception:
+                    verify_message = f"Bot API returned non-JSON response: {verify_text}"
+            else:
+                verify_message = "Token saved, but bot_api_url is not configured."
+
+        status_label = "✅ Verification Complete" if verify_success else "⚠ Authorization Complete"
 
         return HTMLResponse(f"""
+        <!DOCTYPE html>
         <html>
         <head>
             <title>{BRAND_NAME}</title>
@@ -170,6 +204,7 @@ await oauth_sessions.delete_one({"state": state})
                     color: #43b581;
                     font-size: 24px;
                     font-weight: bold;
+                    margin-bottom: 12px;
                 }}
                 .muted {{
                     color: #cfd5e6;
@@ -179,9 +214,9 @@ await oauth_sessions.delete_one({"state": state})
         </head>
         <body>
             <div class="card">
-                <div class="ok">✅ Verification Complete</div>
+                <div class="ok">{status_label}</div>
                 <p class="muted">User: <b>{username}</b></p>
-                <p class="muted">{verify_json.get("message", "Completed")}</p>
+                <p class="muted">{verify_message}</p>
                 <p class="muted">You can now return to Discord.</p>
             </div>
         </body>
@@ -189,4 +224,7 @@ await oauth_sessions.delete_one({"state": state})
         """)
 
     except Exception as e:
-        return HTMLResponse(f"<h2>Callback Error</h2><pre>{str(e)}</pre>", status_code=500)
+        return HTMLResponse(
+            f"<h2>Callback Error</h2><pre>{str(e)}</pre>",
+            status_code=500
+        )
