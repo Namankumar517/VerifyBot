@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ brand_name }} Dashboard</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #0b1020, #161b2e);
+            color: white;
+            padding: 40px;
+        }
+        h1 {
+            margin-bottom: 10px;
+        }
+        .sub {
+            color: #cfd5e6;
+            margin-bottom: 24px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 18px;
+            margin-bottom: 28px;
+        }
+        .card {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 20px;
+            padding: 24px;
+            box-shadow: 0 15px 40px rgba(0,0,0,0.28);
+        }
+        .num {
+            font-size: 34px;
+            font-weight: bold;
+            margin-top: 8px;
+        }
+        .label {
+            color: #cfd5e6;
+        }
+        .logs {
+            margin-top: 10px;
+        }
+        .log-item {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 16px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+        .small {
+            color: #cfd5e6;
+            font-size: 14px;
+            margin-top: 6px;
+        }
+        code {
+            color: #ffffff;
+        }
+    </style>
+</head>
+<body>
+    <h1>📊 {{ brand_name }} Dashboard</h1>
+    <div class="sub">Guild ID: {{ guild_id }}</div>
+
+    <div class="grid">
+        <div class="card">
+            <div class="label">Verified Users</div>
+            <div class="num">{{ total_verified }}</div>
+        </div>
+
+        <div class="card">
+            <div class="label">Pending Users</div>
+            <div class="num">{{ pending }}</div>
+        </div>
+
+        <div class="card">
+            <div class="label">Auto-Kicked</div>
+            <div class="num">{{ kicked }}</div>
+        </div>
+
+        <div class="card">
+            <div class="label">Captcha Failed</div>
+            <div class="num">{{ captcha_failed }}</div>
+        </div>
+
+        <div class="card">
+            <div class="label">Suspicious Blocks</div>
+            <div class="num">{{ suspicious }}</div>
+        </div>
+    </div>
+
+    <h2>Recent Verification Logs</h2>
+    <div class="logs">
+        {% for log in logs %}
+            <div class="log-item">
+                <div><b>Status:</b> <code>{{ log.get("status", "unknown") }}</code></div>
+                <div><b>User:</b> <code>{{ log.get("username", "unknown") }}</code></div>
+                <div><b>User ID:</b> <code>{{ log.get("user_id", "n/a") }}</code></div>
+                <div><b>Risk Score:</b> <code>{{ log.get("risk_score", 0) }}</code></div>
+                <div><b>Flags:</b> <code>{{ ", ".join(log.get("risk_flags", [])) if log.get("risk_flags") else "None" }}</code></div>
+                <div class="small">{{ log.get("created_at", "") }}</div>
+            </div>
+        {% endfor %}
+    </div>
+</body>
+</html>
