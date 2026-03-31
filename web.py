@@ -243,6 +243,19 @@ async def home(request: Request):
 
 @app.get("/verify/{guild_id}", response_class=HTMLResponse)
 async def verify_page(request: Request, guild_id: int):
+    try:
+        state = secrets.token_urlsafe(32)
+
+        await sessions_collection.insert_one({
+            "state": state,
+            "guild_id": guild_id,
+            "created_at": datetime.now(timezone.utc),
+            "used": False
+        })
+
+    except Exception as e:
+        return HTMLResponse(f"<h2>DB Error: {str(e)}</h2>")
+
     return HTMLResponse(f"""
     <html>
     <head>
@@ -266,46 +279,24 @@ async def verify_page(request: Request, guild_id: int):
             a {{
                 display: inline-block;
                 margin-top: 15px;
-                padding: 10px 20px;
+                padding: 12px 20px;
                 background: #5865F2;
                 color: white;
                 text-decoration: none;
                 border-radius: 8px;
+                font-weight: bold;
             }}
         </style>
     </head>
     <body>
         <div class="card">
-            <h2>Verify Page Working ✅</h2>
+            <h2>🔐 Verification</h2>
             <p>Guild ID: {guild_id}</p>
+            <a href="/start-oauth?state={state}">Start Verification</a>
         </div>
     </body>
     </html>
     """)
-    settings = await get_guild_settings(guild_id)
-    state = secrets.token_urlsafe(32)
-    captcha_text = make_captcha_text()
-
-    if mongo_ready():
-        try:
-            await sessions_collection.insert_one({
-                "state": state,
-                "guild_id": guild_id,
-                "created_at": datetime.now(timezone.utc),
-                "used": False,
-                "captcha_answer": captcha_text
-            })
-        except Exception as e:
-            return HTMLResponse(f"Session store error: {str(e)}", status_code=500)
-
-    return templates.TemplateResponse("verify.html", {
-        "request": request,
-        "state": state,
-        "guild_id": guild_id,
-        "brand_name": settings.get("brand_name", DEFAULT_BRAND_NAME),
-        "turnstile_enabled": TURNSTILE_ENABLED,
-        "turnstile_site_key": TURNSTILE_SITE_KEY
-    })
 
 @app.get("/captcha/{state}")
 async def captcha_image(state: str):
@@ -320,68 +311,20 @@ async def captcha_image(state: str):
     image_bytes = generate_captcha_image(text)
     return Response(content=image_bytes, media_type="image/png")
 
-@app.post("/start-oauth")
-async def start_oauth(
-    request: Request,
-    state: str = Form(...),
-    captcha_answer: str = Form(""),
-    cf_turnstile_response: str = Form(default="")
-):
-    if not mongo_ready():
-        return HTMLResponse("Database is not ready.", status_code=500)
-
-    session = await sessions_collection.find_one({"state": state})
-    if not session:
-        return templates.TemplateResponse("failed.html", {
-            "request": request,
-            "message": "Invalid verification session.",
-            "brand_name": DEFAULT_BRAND_NAME
-        })
-
-    guild_id = session["guild_id"]
-    settings = await get_guild_settings(guild_id)
-    brand_name = settings.get("brand_name", DEFAULT_BRAND_NAME)
-
-    if session.get("used"):
-        return templates.TemplateResponse("failed.html", {
-            "request": request,
-            "message": "This session was already used.",
-            "brand_name": brand_name
-        })
-
-    if TURNSTILE_ENABLED:
-        remote_ip = request.client.host if request.client else None
-        ok = await verify_turnstile(cf_turnstile_response, remote_ip)
-        if not ok:
-            return templates.TemplateResponse("failed.html", {
-                "request": request,
-                "message": "Turnstile verification failed.",
-                "brand_name": brand_name
-            })
-    else:
-        if captcha_answer.strip().upper() != str(session.get("captcha_answer", "")).upper():
-            await attempts_collection.insert_one({
-                "guild_id": guild_id,
-                "status": "captcha_failed",
-                "created_at": datetime.now(timezone.utc),
-                "state": state
-            })
-            return templates.TemplateResponse("failed.html", {
-                "request": request,
-                "message": "Captcha answer is incorrect.",
-                "brand_name": brand_name
-            })
+@app.get("/start-oauth")
+async def start_oauth(state: str):
+    redirect_uri = REDIRECT_URI
 
     discord_auth_url = (
         f"https://discord.com/oauth2/authorize"
         f"?client_id={CLIENT_ID}"
         f"&response_type=code"
-        f"&redirect_uri={REDIRECT_URI}"
+        f"&redirect_uri={redirect_uri}"
         f"&scope=identify"
         f"&state={state}"
     )
 
-    return RedirectResponse(discord_auth_url, status_code=302)
+    return RedirectResponse(discord_auth_url)
 
 @app.get("/callback")
 async def callback(request: Request, code: str = None, state: str = None):
