@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ brand_name }}</title>
+    {% if turnstile_enabled %}
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    {% endif %}
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #0b1020, #161b2e);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .card {
+            width: 460px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 22px;
+            padding: 34px;
+            box-shadow: 0 15px 45px rgba(0,0,0,0.35);
+            text-align: center;
+        }
+        .captcha-box {
+            margin: 18px 0;
+            background: rgba(255,255,255,0.04);
+            border-radius: 14px;
+            padding: 14px;
+        }
+        .input {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 12px;
+            outline: none;
+            margin-top: 14px;
+            margin-bottom: 18px;
+            box-sizing: border-box;
+        }
+        .btn {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 12px;
+            background: #5865F2;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        img {
+            max-width: 100%;
+            border-radius: 12px;
+        }
+        .muted {
+            color: #cfd5e6;
+            line-height: 1.6;
+        }
+        .turnstile-wrap {
+            display: flex;
+            justify-content: center;
+            margin: 18px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🔐 {{ brand_name }}</h1>
+        <p class="muted">Complete the security check to continue verification.</p>
+
+        <form method="POST" action="/start-oauth">
+            <input type="hidden" name="state" value="{{ state }}">
+
+            {% if turnstile_enabled %}
+                <div class="turnstile-wrap">
+                    <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}"></div>
+                </div>
+            {% else %}
+                <div class="captcha-box">
+                    <img src="/captcha/{{ state }}" alt="captcha">
+                </div>
+                <input class="input" type="text" name="captcha_answer" placeholder="Enter captcha text" required>
+            {% endif %}
+
+            <button class="btn" type="submit">Continue with Discord</button>
+        </form>
+    </div>
+</body>
+</html>
