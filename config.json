@@ -6,8 +6,8 @@
 
   "client_id": "1461287528546959360",
   "client_secret": "NAdnn0o661xWfmN4y3k06WTOCG154e3U",
-  "redirect_uri": "http://verify.vexcloud.qzz.io/callback",
-  "web_base_url": "http://verify.vexcloud.qzz.io",
+  "redirect_uri": "https://verifybot-f9ud.onrender.com/callback",
+  "web_base_url": "https://verifybot-f9ud.onrender.com",
 
   "bot_api_url": "",
   "internal_api_key": "Zx9#Nexora_7K!verify@2026_SECURE_apiKey_48Lm$",
