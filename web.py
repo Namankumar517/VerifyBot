@@ -328,223 +328,55 @@ async def start_oauth(state: str):
 
 @app.get("/callback")
 async def callback(request: Request, code: str = None, state: str = None):
-    if not mongo_ready():
-        return templates.TemplateResponse("failed.html", {
-            "request": request,
-            "message": "Database is not ready.",
-            "brand_name": DEFAULT_BRAND_NAME
-        })
-
-    if not code or not state:
-        return templates.TemplateResponse("failed.html", {
-            "request": request,
-            "message": "Missing code or state.",
-            "brand_name": DEFAULT_BRAND_NAME
-        })
-
-    session = await sessions_collection.find_one({"state": state})
-    if not session:
-        return templates.TemplateResponse("failed.html", {
-            "request": request,
-            "message": "Invalid session state.",
-            "brand_name": DEFAULT_BRAND_NAME
-        })
-
-    guild_id = session["guild_id"]
-    settings = await get_guild_settings(guild_id)
-    brand_name = settings.get("brand_name", DEFAULT_BRAND_NAME)
-    retry_cooldown = settings.get("verify_retry_cooldown_seconds", DEFAULT_RETRY_COOLDOWN)
-
-    if session.get("used"):
-        return templates.TemplateResponse("failed.html", {
-            "request": request,
-            "message": "This verification session was already used.",
-            "brand_name": brand_name
-        })
-
-    token_url = "https://discord.com/api/oauth2/token"
-    user_url = "https://discord.com/api/users/@me"
-    data = {
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": REDIRECT_URI,
-    }
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            token_response = await client.post(token_url, data=data, headers=headers)
-            token_json = token_response.json()
-
-            access_token = token_json.get("access_token")
-            if not access_token:
-                return templates.TemplateResponse("failed.html", {
-                    "request": request,
-                    "message": "Could not get access token from Discord.",
-                    "brand_name": brand_name
-                })
-
-            user_response = await client.get(
-                user_url,
-                headers={"Authorization": f"Bearer {access_token}"}
-            )
-            user_data = user_response.json()
-
-            discord_user_id = int(user_data["id"])
-            discord_username = f'{user_data["username"]}'
-
-            cooldown_threshold = datetime.now(timezone.utc) - timedelta(seconds=retry_cooldown)
-            recent_attempt = await attempts_collection.find_one({
-                "guild_id": guild_id,
-                "user_id": discord_user_id,
-                "created_at": {"$gte": cooldown_threshold}
-            })
-
-            if recent_attempt:
-                return templates.TemplateResponse("failed.html", {
-                    "request": request,
-                    "message": f"Please wait {retry_cooldown} seconds before retrying verification.",
-                    "brand_name": brand_name
-                })
-
-            already_verified = await verified_collection.find_one({
-                "guild_id": guild_id,
-                "user_id": discord_user_id,
-                "verified": True
-            })
-
-            if already_verified:
-                await sessions_collection.update_one(
-                    {"state": state},
-                    {
-                        "$set": {
-                            "used": True,
-                            "user_id": discord_user_id,
-                            "username": discord_username,
-                            "completed_at": datetime.now(timezone.utc),
-                            "result": "already_verified"
-                        }
-                    }
-                )
-
-                return templates.TemplateResponse("success.html", {
-                    "request": request,
-                    "username": discord_username,
-                    "user_id": discord_user_id,
-                    "message": "You are already verified.",
-                    "brand_name": brand_name
-                })
-
-            risk_score, risk_flags = calculate_risk(user_data)
-
-            verify_result = {
-                "success": False,
-                "message": "Bot sync is not configured yet."
-            }
-
-            if not bot_api_is_unusable():
-                try:
-                    verify_api_response = await client.post(
-                        f"{BOT_API_URL}/internal/verify",
-                        json={
-                            "guild_id": guild_id,
-                            "user_id": discord_user_id,
-                            "username": discord_username,
-                            "source": "website_oauth",
-                            "risk_score": risk_score,
-                            "risk_flags": risk_flags
-                        },
-                        headers={"x-api-key": INTERNAL_API_KEY}
-                    )
-                    verify_result = verify_api_response.json()
-                except Exception as api_error:
-                    verify_result = {
-                        "success": False,
-                        "message": f"Bot sync failed: {str(api_error)}"
-                    }
-
-        await sessions_collection.update_one(
-            {"state": state},
-            {
-                "$set": {
-                    "used": True,
-                    "guild_id": guild_id,
-                    "user_id": discord_user_id,
-                    "username": discord_username,
-                    "completed_at": datetime.now(timezone.utc),
-                    "result": verify_result.get("message", "unknown"),
-                    "risk_score": risk_score,
-                    "risk_flags": risk_flags
-                }
-            }
-        )
-
-        await attempts_collection.insert_one({
-            "guild_id": guild_id,
-            "user_id": discord_user_id,
-            "username": discord_username,
-            "status": "website_callback",
-            "created_at": datetime.now(timezone.utc),
-            "result": verify_result.get("message", "unknown"),
-            "risk_score": risk_score,
-            "risk_flags": risk_flags
-        })
-
-        # Save website-side verification record even if bot sync is unavailable
-        await verified_collection.update_one(
-            {"guild_id": guild_id, "user_id": discord_user_id},
-            {
-                "$set": {
-                    "guild_id": guild_id,
-                    "user_id": discord_user_id,
-                    "username": discord_username,
-                    "verified": bool(verify_result.get("success", False)),
-                    "verified_at": datetime.now(timezone.utc),
-                    "source": "website_oauth",
-                    "risk_score": risk_score,
-                    "risk_flags": risk_flags,
-                    "bot_sync_message": verify_result.get("message", "")
-                }
-            },
-            upsert=True
-        )
-
-        if not verify_result.get("success"):
-            return templates.TemplateResponse("success.html", {
-                "request": request,
-                "username": discord_username,
-                "user_id": discord_user_id,
-                "message": (
-                    "Website verification completed, but automatic Discord role sync is not configured yet. "
-                    f"Bot response: {verify_result.get('message', 'Unknown issue')}"
-                ),
-                "brand_name": brand_name
-            })
-
-        return templates.TemplateResponse("success.html", {
-            "request": request,
-            "username": discord_username,
-            "user_id": discord_user_id,
-            "message": "Your Discord account has been verified successfully.",
-            "brand_name": brand_name
-        })
-
+        return HTMLResponse(f"""
+        <html>
+        <head>
+            <title>Verification Complete</title>
+            <style>
+                body {{
+                    background: #0b1020;
+                    color: white;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    font-family: Arial;
+                    margin: 0;
+                }}
+                .card {{
+                    background: #161b2e;
+                    padding: 30px;
+                    border-radius: 15px;
+                    text-align: center;
+                    width: 420px;
+                    box-shadow: 0 12px 32px rgba(0,0,0,0.35);
+                }}
+                .ok {{
+                    font-size: 22px;
+                    font-weight: bold;
+                    margin-bottom: 12px;
+                    color: #43b581;
+                }}
+                .muted {{
+                    color: #cfd5e6;
+                    line-height: 1.6;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <div class="ok">✅ Authorization Success</div>
+                <p class="muted">Discord OAuth callback reached successfully.</p>
+                <p class="muted">Code: {code}</p>
+                <p class="muted">State: {state}</p>
+                <p class="muted">You can now return to Discord.</p>
+            </div>
+        </body>
+        </html>
+        """)
     except Exception as e:
-        if mongo_ready():
-            await attempts_collection.insert_one({
-                "guild_id": guild_id if "guild_id" in locals() else 0,
-                "status": "website_error",
-                "created_at": datetime.now(timezone.utc),
-                "error": str(e)
-            })
-
-        return templates.TemplateResponse("failed.html", {
-            "request": request,
-            "message": f"Verification failed: {str(e)}",
-            "brand_name": brand_name
-        })
+        return HTMLResponse(f"<h2>Callback Error: {str(e)}</h2>", status_code=500)
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, key: str = Query(default=""), guild_id: int = Query(default=0)):
