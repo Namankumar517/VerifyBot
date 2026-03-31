@@ -243,6 +243,45 @@ async def home(request: Request):
 
 @app.get("/verify/{guild_id}", response_class=HTMLResponse)
 async def verify_page(request: Request, guild_id: int):
+    return HTMLResponse(f"""
+    <html>
+    <head>
+        <title>Verify</title>
+        <style>
+            body {{
+                background: #0b1020;
+                color: white;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                font-family: Arial;
+            }}
+            .card {{
+                background: #161b2e;
+                padding: 30px;
+                border-radius: 15px;
+                text-align: center;
+            }}
+            a {{
+                display: inline-block;
+                margin-top: 15px;
+                padding: 10px 20px;
+                background: #5865F2;
+                color: white;
+                text-decoration: none;
+                border-radius: 8px;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h2>Verify Page Working ✅</h2>
+            <p>Guild ID: {guild_id}</p>
+        </div>
+    </body>
+    </html>
+    """)
     settings = await get_guild_settings(guild_id)
     state = secrets.token_urlsafe(32)
     captcha_text = make_captcha_text()
