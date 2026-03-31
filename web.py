@@ -73,10 +73,12 @@ async def callback(request: Request, code: str = None, state: str = None):
             return HTMLResponse("<h2>Missing code or state</h2>", status_code=400)
 
         session = await oauth_sessions.find_one({"state": state})
-        if not session:
-            return HTMLResponse("<h2>Invalid or expired session</h2>", status_code=400)
+if not session:
+    return HTMLResponse("<h2>Invalid or expired session</h2>", status_code=400)
 
-        guild_id = session["guild_id"]
+guild_id = session["guild_id"]
+
+await oauth_sessions.delete_one({"state": state})
 
         async with httpx.AsyncClient(timeout=20.0) as client:
             token_res = await client.post(
