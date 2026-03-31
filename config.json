@@ -9,7 +9,7 @@
   "redirect_uri": "https://verifybot-f9ud.onrender.com/callback",
   "web_base_url": "https://verifybot-f9ud.onrender.com",
 
-  "bot_api_url": "",
+  "bot_api_url": "http://85.215.229.230:9730",
   "internal_api_key": "Zx9#Nexora_7K!verify@2026_SECURE_apiKey_48Lm$",
 
   "default_min_account_age_days": 7,
