@@ -1,0 +1,27 @@
+{
+  "token": "...",
+
+  "mongo_uri": "mongodb+srv://CodeXmongodb:codexop@codexcluster.tebuglj.mongodb.net/?appName=CodeXCluster",
+  "database_name": "vault_verify_bot",
+
+  "client_id": "1461287528546959360",
+  "client_secret": "NAdnn0o661xWfmN4y3k06WTOCG154e3U",
+  "redirect_uri": "http://verify.vexcloud.qzz.io/callback",
+  "web_base_url": "http://verify.vexcloud.qzz.io",
+
+  "bot_api_url": "http://127.0.0.1:5000",
+  "internal_api_key": "Zx9#Nexora_7K!verify@2026_SECURE_apiKey_48Lm$",
+
+  "default_min_account_age_days": 7,
+  "default_autokick_enabled": true,
+  "default_autokick_minutes": 10,
+  "default_verify_retry_cooldown_seconds": 45,
+  "default_brand_name": "VexCloud Verification",
+
+  "dashboard_access_key": "NexoraDash@2026_AdminSecureKey#91",
+  "turnstile_enabled": false,
+  "turnstile_secret_key": "YOUR_TURNSTILE_SECRET",
+  "turnstile_site_key": "YOUR_TURNSTILE_SITE_KEY",
+
+  "alert_webhook_url": "PASTE_DISCORD_WEBHOOK_URL_HERE"
+}
